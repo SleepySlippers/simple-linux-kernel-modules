@@ -1,0 +1,2 @@
+menuconfig PHONEBOOK
+	tristate "PHONEBOOK"
