@@ -12,22 +12,25 @@ MODULE_AUTHOR("arseny staroverov.ag@phystech.ru");
 MODULE_DESCRIPTION("reports how much keys was entered");
 MODULE_VERSION("0.0");
 
-static unsigned int key_count = 0;
+static struct timer_list my_timer;
 
-static time64_t last_time;
+static atomic_t key_count = ATOMIC_INIT(0);
+
+static const int TIMEOUT = 60000;
+
+static void schedule_timer(void) {
+    mod_timer(&my_timer, jiffies + msecs_to_jiffies(TIMEOUT));
+}
+
+void my_timer_callback(struct timer_list *timer) {
+    int number = atomic_fetch_and(0, &key_count); // read and set to zero (it seems there is no fetch_set, so i need to use fetch_and kekw )
+    printk(KERN_INFO "Characters typed in the last minute: %d\n", number);
+    schedule_timer();
+}
 
 irqreturn_t irq_handler(int irq, void *dev_id)
 {
-    time64_t cur_time = ktime_get_seconds();
-
-    if (cur_time < last_time + 60) {
-        ++key_count;
-    } else {
-        last_time = cur_time;
-        printk(KERN_INFO "Characters typed in the last minute: %u\n", key_count);
-        key_count = 1;
-    }
-
+    atomic_inc(&key_count);
     return IRQ_HANDLED;
 }
 
@@ -37,7 +40,8 @@ static int __init keycounter_init(void) {
 
     printk(KERN_INFO "Keycounter started\n");
 
-    last_time = ktime_get_seconds();
+    timer_setup(&my_timer, my_timer_callback, 0);
+    schedule_timer();
     
     int err = request_irq(PS2_IRQ, irq_handler, IRQF_SHARED, "Keycounter", (void*) irq_handler);
     if (err) {
@@ -52,6 +56,7 @@ static int __init keycounter_init(void) {
 
 static void __exit keycounter_exit(void) {
     free_irq(PS2_IRQ, (void*) irq_handler);
+    del_timer(&my_timer);
     printk(KERN_INFO "Keycounter exited\n");
 }
 
