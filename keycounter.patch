@@ -1,0 +1,113 @@
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index 514ae6b24..6e86e4547 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -1,6 +1,8 @@
+ # SPDX-License-Identifier: GPL-2.0
+ menu "Device Drivers"
+ 
++source "drivers/keycounter/Kconfig"
++
+ # Keep I/O buses first
+ 
+ source "drivers/amba/Kconfig"
+diff --git a/drivers/Makefile b/drivers/Makefile
+index 7241d80a7..2e0d3fa8e 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -6,6 +6,8 @@
+ # Rewritten to use lists instead of if-statements.
+ #
+ 
++obj-$(CONFIG_KEYCOUNTER)		+= keycounter/
++
+ # Some driver Makefiles miss $(srctree)/ for include directive.
+ ifdef building_out_of_srctree
+ MAKEFLAGS += --include-dir=$(srctree)
+diff --git a/drivers/keycounter/Kconfig b/drivers/keycounter/Kconfig
+new file mode 100644
+index 000000000..05b50a6dd
+--- /dev/null
++++ b/drivers/keycounter/Kconfig
+@@ -0,0 +1,2 @@
++menuconfig KEYCOUNTER
++	tristate "KEYCOUNTER"
+diff --git a/drivers/keycounter/Makefile b/drivers/keycounter/Makefile
+new file mode 100644
+index 000000000..9943fb099
+--- /dev/null
++++ b/drivers/keycounter/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_KEYCOUNTER) += keycounter.o
+\ No newline at end of file
+diff --git a/drivers/keycounter/keycounter.c b/drivers/keycounter/keycounter.c
+new file mode 100644
+index 000000000..488a194d8
+--- /dev/null
++++ b/drivers/keycounter/keycounter.c
+@@ -0,0 +1,64 @@
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/device.h>
++#include <linux/fs.h>
++#include <linux/cdev.h>
++#include <linux/time.h>
++#include <linux/interrupt.h>
++
++MODULE_LICENSE("MIT");
++MODULE_AUTHOR("arseny staroverov.ag@phystech.ru");
++MODULE_DESCRIPTION("reports how much keys was entered");
++MODULE_VERSION("0.0");
++
++static struct timer_list my_timer;
++
++static atomic_t key_count = ATOMIC_INIT(0);
++
++static const int TIMEOUT = 60000;
++
++static void schedule_timer(void) {
++    mod_timer(&my_timer, jiffies + msecs_to_jiffies(TIMEOUT));
++}
++
++void my_timer_callback(struct timer_list *timer) {
++    int number = atomic_fetch_and(0, &key_count); // read and set to zero (it seems there is no fetch_set, so i need to use fetch_and kekw )
++    printk(KERN_INFO "Characters typed in the last minute: %d\n", number);
++    schedule_timer();
++}
++
++irqreturn_t irq_handler(int irq, void *dev_id)
++{
++    atomic_inc(&key_count);
++    return IRQ_HANDLED;
++}
++
++static const int PS2_IRQ = 1; // IRQ for PS/2 keyboard https://en.wikipedia.org/wiki/Interrupt_request#Master_PIC
++
++static int __init keycounter_init(void) {
++
++    printk(KERN_INFO "Keycounter started\n");
++
++    timer_setup(&my_timer, my_timer_callback, 0);
++    schedule_timer();
++    
++    int err = request_irq(PS2_IRQ, irq_handler, IRQF_SHARED, "Keycounter", (void*) irq_handler);
++    if (err) {
++        pr_err("Failed to register IRQ handler ret code: %d\n", err);
++        return -EIO;
++    }
++    
++    printk(KERN_INFO "Keycounter module initialized\n");
++
++    return 0;
++}
++
++static void __exit keycounter_exit(void) {
++    free_irq(PS2_IRQ, (void*) irq_handler);
++    del_timer(&my_timer);
++    printk(KERN_INFO "Keycounter exited\n");
++}
++
++module_init(keycounter_init);
++module_exit(keycounter_exit);
+\ No newline at end of file
